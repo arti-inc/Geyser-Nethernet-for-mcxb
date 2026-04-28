@@ -411,6 +411,12 @@ public interface GeyserConfig {
             All Floodgate functionality (including skin uploading and account linking) will also not work when this option is disabled.""")
         @DefaultBoolean(true)
         boolean validateBedrockLogin();
+
+        @Comment("""
+            Experimental portal-style ingress settings.
+            This is intended for a future Bedrock portal join path where a trusted ingress adapter delivers the real
+            Bedrock session directly into Geyser, instead of transferring the player to a second Bedrock listener.""")
+        PortalBridgeConfig portalBridge();
     }
 
     @ConfigSerializable

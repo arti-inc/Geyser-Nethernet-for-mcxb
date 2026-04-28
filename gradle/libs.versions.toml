@@ -46,6 +46,8 @@ mixin = "0.8.5"
 mixinextras = "0.3.5"
 minecraft = "1.21.11"
 mockito = "5.+"
+nethernet = "1.6.1"
+webrtc = "1.0.3"
 
 # plugin versions
 indra = "4.0.0"
@@ -95,6 +97,8 @@ adventure-text-serializer-bungeecord = { group = "net.kyori", name = "adventure-
 
 netty-codec-haproxy = { group = "io.netty", name = "netty-codec-haproxy", version.ref = "netty" }
 netty-handler = { group = "io.netty", name = "netty-handler", version.ref = "netty" }
+netty-transport-nethernet = { group = "dev.kastle.netty", name = "netty-transport-nethernet", version.ref = "nethernet" }
+webrtc = { group = "dev.kastle.webrtc", name = "webrtc-java", version.ref = "webrtc" }
 netty-transport-native-epoll = { group = "io.netty", name = "netty-transport-native-epoll", version.ref = "netty" }
 netty-transport-native-kqueue = { group = "io.netty", name = "netty-transport-native-kqueue", version.ref = "netty" }
 netty-transport-native-io_uring = { group = "io.netty", name = "netty-transport-native-io_uring", version.ref = "netty" }

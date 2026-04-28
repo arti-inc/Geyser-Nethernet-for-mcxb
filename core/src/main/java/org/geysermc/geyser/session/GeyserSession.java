@@ -275,6 +275,8 @@ public class GeyserSession implements GeyserConnection, GeyserCommandSource {
     private List<String> certChainData;
     @Setter
     private String token;
+    @Setter
+    private boolean trustedProxySelfSignedLogin;
 
     @NonNull
     @Setter
