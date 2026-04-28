@@ -79,6 +79,7 @@ import static org.cloudburstmc.netty.channel.raknet.RakConstants.DEFAULT_PACKET_
 
 public final class GeyserServer {
     private static final boolean PRINT_DEBUG_PINGS = Boolean.parseBoolean(System.getProperty("Geyser.PrintPingsInDebugMode", "true"));
+    private static final boolean PROXY_BRIDGE_DEBUG = Boolean.parseBoolean(System.getProperty("Geyser.ProxyBridgeDebug", "false"));
 
     /*
     The following constants are all used to ensure the ping does not reach a length where it is unparsable by the Bedrock client
@@ -252,6 +253,9 @@ public final class GeyserServer {
     }
 
     public boolean onConnectionRequest(InetSocketAddress inetSocketAddress) {
+        if (PROXY_BRIDGE_DEBUG) {
+            geyser.getLogger().info("[proxy-bridge] RakNet connection request from " + inetSocketAddress);
+        }
         List<String> allowedProxyIPs = geyser.config().advanced().bedrock().haproxyProtocolWhitelistedIps();
         if (geyser.config().advanced().bedrock().useHaproxyProtocol() && !allowedProxyIPs.isEmpty()) {
             boolean isWhitelistedIP = false;
@@ -286,11 +290,17 @@ public final class GeyserServer {
         geyser.eventBus().fire(requestEvent);
         if (requestEvent.isCancelled()) {
             geyser.getLogger().debug("Connection request from " + ip + " was cancelled using the API!");
+            if (PROXY_BRIDGE_DEBUG) {
+                geyser.getLogger().info("[proxy-bridge] Connection request cancelled for " + inetSocketAddress);
+            }
             connectionAttempts++;
             return false;
         }
 
         geyser.getLogger().debug(GeyserLocale.getLocaleStringLog("geyser.network.attempt_connect", ip));
+        if (PROXY_BRIDGE_DEBUG) {
+            geyser.getLogger().info("[proxy-bridge] Connection request accepted for " + inetSocketAddress);
+        }
         connectionAttempts++;
         return true;
     }

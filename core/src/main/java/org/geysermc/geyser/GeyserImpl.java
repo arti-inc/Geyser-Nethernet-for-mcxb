@@ -82,6 +82,7 @@ import org.geysermc.geyser.impl.MinecraftVersionImpl;
 import org.geysermc.geyser.level.BedrockDimension;
 import org.geysermc.geyser.level.WorldManager;
 import org.geysermc.geyser.network.GameProtocol;
+import org.geysermc.geyser.network.portal.PortalBridgeBootstrap;
 import org.geysermc.geyser.network.netty.GeyserServer;
 import org.geysermc.geyser.ping.GeyserLegacyPingPassthrough;
 import org.geysermc.geyser.registry.BlockRegistries;
@@ -170,6 +171,7 @@ public class GeyserImpl implements GeyserApi, EventRegistrar {
     private ScheduledExecutorService scheduledThread;
 
     private GeyserServer geyserServer;
+    private @Nullable PortalBridgeBootstrap portalBridgeBootstrap;
     private final GeyserBootstrap bootstrap;
 
     private final GeyserEventBus eventBus;
@@ -496,6 +498,11 @@ public class GeyserImpl implements GeyserApi, EventRegistrar {
                 }
             }).join();
 
+        if (config.advanced().bedrock().portalBridge().enabled()) {
+            this.portalBridgeBootstrap = new PortalBridgeBootstrap(this);
+            this.portalBridgeBootstrap.start();
+        }
+
         if (config.java().authType() == AuthType.FLOODGATE) {
             try {
                 Key key = new AesKeyProducer().produceFrom(bootstrap.getFloodgateKeyPath());
@@ -596,6 +603,7 @@ public class GeyserImpl implements GeyserApi, EventRegistrar {
 
         runIfNonNull(scheduledThread, ScheduledExecutorService::shutdown);
         runIfNonNull(geyserServer, GeyserServer::shutdown);
+        runIfNonNull(portalBridgeBootstrap, PortalBridgeBootstrap::close);
         runIfNonNull(skinUploader, FloodgateSkinUploader::close);
         runIfNonNull(newsHandler, NewsHandler::shutdown);
         runIfNonNull(erosionUnixListener, UnixSocketClientListener::close);
