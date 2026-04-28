@@ -41,6 +41,7 @@ import org.geysermc.geyser.session.GeyserSession;
 import java.net.InetSocketAddress;
 
 public class GeyserServerInitializer extends BedrockServerInitializer {
+    private static final boolean PROXY_BRIDGE_DEBUG = Boolean.parseBoolean(System.getProperty("Geyser.ProxyBridgeDebug", "false"));
     private final GeyserImpl geyser;
     private final boolean rakCookiesEnabled;
     // There is a constructor that doesn't require inputting threads, but older Netty versions don't have it
@@ -63,6 +64,9 @@ public class GeyserServerInitializer extends BedrockServerInitializer {
     @Override
     public void initSession(@NonNull BedrockServerSession bedrockServerSession) {
         try {
+            if (PROXY_BRIDGE_DEBUG) {
+                this.geyser.getLogger().info("[proxy-bridge] initSession remote=" + bedrockServerSession.getSocketAddress());
+            }
             if (this.geyser.getGeyserServer().getProxiedAddresses() != null) {
                 InetSocketAddress address = this.geyser.getGeyserServer().getProxiedAddresses().get((InetSocketAddress) bedrockServerSession.getSocketAddress());
                 if (address != null) {
@@ -79,6 +83,9 @@ public class GeyserServerInitializer extends BedrockServerInitializer {
             }
 
             bedrockServerSession.setPacketHandler(new UpstreamPacketHandler(this.geyser, session));
+            if (PROXY_BRIDGE_DEBUG) {
+                this.geyser.getLogger().info("[proxy-bridge] packet handler installed remote=" + bedrockServerSession.getSocketAddress());
+            }
         } catch (Throwable e) {
             // Error must be caught or it will be swallowed
             this.geyser.getLogger().error("Error occurred while initializing player!", e);

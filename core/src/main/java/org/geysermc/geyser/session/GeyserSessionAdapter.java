@@ -76,7 +76,7 @@ public class GeyserSessionAdapter extends SessionAdapter {
                 byte[] encryptedData;
 
                 try {
-                    FloodgateSkinUploader skinUploader = geyser.getSkinUploader();
+                    FloodgateSkinUploader skinUploader = session.isTrustedProxySelfSignedLogin() ? null : geyser.getSkinUploader();
                     FloodgateCipher cipher = geyser.getCipher();
 
                     String bedrockAddress = session.getUpstream().getAddress().getAddress().getHostAddress();
@@ -95,6 +95,8 @@ public class GeyserSessionAdapter extends SessionAdapter {
                         clientData.getUiProfile().ordinal(),
                         clientData.getCurrentInputMode().ordinal(),
                         bedrockAddress,
+                        null,
+                        session.isTrustedProxySelfSignedLogin(),
                         skinUploader == null ? 0 : skinUploader.getId(),
                         skinUploader == null ? null : skinUploader.getVerifyCode()
                     ).toString());
