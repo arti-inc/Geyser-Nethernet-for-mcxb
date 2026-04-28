@@ -25,6 +25,7 @@
 
 package org.geysermc.geyser.network.portal;
 
+import com.google.gson.JsonObject;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.geysermc.geyser.GeyserImpl;
 import org.geysermc.geyser.configuration.PortalBridgeConfig;
@@ -33,17 +34,24 @@ import org.geysermc.geyser.network.portal.nethernet.PortalNetherNetServer;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Startup and trust bootstrap for portal-style Bedrock ingress.
  */
 public final class PortalBridgeBootstrap implements AutoCloseable {
+    private static final String SESSION_STATUS_FILENAME = "portal-session-status.json";
     private final GeyserImpl geyser;
     private final PortalBridgeConfig config;
     private final List<CIDRMatcher> trustedProxyMatchers;
     private final List<String> configuredRules;
+    private @Nullable ScheduledExecutorService statusWriterExecutor;
     private @Nullable PortalNetherNetServer netherNetServer;
 
     public PortalBridgeBootstrap(GeyserImpl geyser) {
@@ -71,6 +79,7 @@ public final class PortalBridgeBootstrap implements AutoCloseable {
         try {
             this.netherNetServer = new PortalNetherNetServer(geyser, config);
             this.netherNetServer.start();
+            startStatusWriter();
         } catch (Throwable throwable) {
             geyser.getLogger().error("[proxy-bridge] Failed to start NetherNet ingress.", throwable);
             close();
@@ -101,10 +110,57 @@ public final class PortalBridgeBootstrap implements AutoCloseable {
 
     @Override
     public void close() {
+        if (this.statusWriterExecutor != null) {
+            this.statusWriterExecutor.shutdownNow();
+            this.statusWriterExecutor = null;
+        }
+        deleteStatusFile();
         if (this.netherNetServer != null) {
             this.netherNetServer.close();
             this.netherNetServer = null;
         }
+    }
+
+    private void startStatusWriter() {
+        this.statusWriterExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "GeyserPortalStatusWriter");
+            thread.setDaemon(true);
+            return thread;
+        });
+        writeStatusFile();
+        this.statusWriterExecutor.scheduleWithFixedDelay(this::writeStatusFile, 5, 5, TimeUnit.SECONDS);
+    }
+
+    private void writeStatusFile() {
+        try {
+            JsonObject root = new JsonObject();
+            root.addProperty("hostName", geyser.bedrockListener().secondaryMotd());
+            root.addProperty("worldName", geyser.bedrockListener().primaryMotd());
+            root.addProperty("players", geyser.onlineConnections().size());
+            root.addProperty("maxPlayers", geyser.config().motd().maxPlayers());
+
+            Path path = statusFile();
+            Files.createDirectories(path.getParent());
+            Files.writeString(path, root.toString() + System.lineSeparator());
+        } catch (Exception exception) {
+            if (config.debugLogging()) {
+                geyser.getLogger().warning("[proxy-bridge] Failed to write session status file: " + exception.getMessage());
+            }
+        }
+    }
+
+    private void deleteStatusFile() {
+        try {
+            Files.deleteIfExists(statusFile());
+        } catch (Exception exception) {
+            if (config.debugLogging()) {
+                geyser.getLogger().warning("[proxy-bridge] Failed to remove session status file: " + exception.getMessage());
+            }
+        }
+    }
+
+    private Path statusFile() {
+        return this.geyser.configDirectory().resolve(SESSION_STATUS_FILENAME);
     }
 
     private static List<String> copyRules(@Nullable List<String> configuredRules) {
