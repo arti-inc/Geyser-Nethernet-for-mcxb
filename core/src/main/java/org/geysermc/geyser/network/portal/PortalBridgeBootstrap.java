@@ -31,11 +31,15 @@ import org.geysermc.geyser.GeyserImpl;
 import org.geysermc.geyser.configuration.PortalBridgeConfig;
 import org.geysermc.geyser.network.CIDRMatcher;
 import org.geysermc.geyser.network.portal.nethernet.PortalNetherNetServer;
+import org.geysermc.geyser.ping.GeyserPingInfo;
+import org.geysermc.geyser.ping.IGeyserPingPassthrough;
+import org.geysermc.geyser.translator.text.MessageTranslator;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -134,10 +138,35 @@ public final class PortalBridgeBootstrap implements AutoCloseable {
     private void writeStatusFile() {
         try {
             JsonObject root = new JsonObject();
-            root.addProperty("hostName", geyser.bedrockListener().secondaryMotd());
-            root.addProperty("worldName", geyser.bedrockListener().primaryMotd());
-            root.addProperty("players", geyser.onlineConnections().size());
-            root.addProperty("maxPlayers", geyser.config().motd().maxPlayers());
+            GeyserPingInfo pingInfo = resolvePingInfo();
+            String bukkitMotd = resolveBukkitMotd();
+            Integer bukkitPlayers = resolveBukkitOnlinePlayers();
+            Integer bukkitMaxPlayers = resolveBukkitMaxPlayers();
+
+            String primaryMotd = bukkitMotd != null ? bukkitMotd : geyser.config().motd().primaryMotd();
+            String secondaryMotd = geyser.config().motd().secondaryMotd();
+            int players = bukkitPlayers != null ? bukkitPlayers : geyser.onlineConnections().size();
+            int maxPlayers = bukkitMaxPlayers != null ? bukkitMaxPlayers : geyser.config().motd().maxPlayers();
+
+            if (geyser.config().motd().passthroughMotd() && pingInfo != null && pingInfo.getDescription() != null) {
+                String[] motd = MessageTranslator.convertMessageLenient(pingInfo.getDescription()).split("\n");
+                primaryMotd = (motd.length > 0 && !motd[0].isBlank()) ? motd[0].trim() : primaryMotd;
+                secondaryMotd = (motd.length > 1 && !motd[1].isBlank()) ? motd[1].trim() : secondaryMotd;
+            }
+
+            if (secondaryMotd == null || secondaryMotd.isBlank() || "Another Geyser server.".equals(secondaryMotd)) {
+                secondaryMotd = primaryMotd;
+            }
+
+            if (geyser.config().motd().passthroughPlayerCounts() && pingInfo != null && pingInfo.getPlayers() != null) {
+                players = pingInfo.getPlayers().getOnline();
+                maxPlayers = pingInfo.getPlayers().getMax();
+            }
+
+            root.addProperty("hostName", secondaryMotd);
+            root.addProperty("worldName", primaryMotd);
+            root.addProperty("players", players);
+            root.addProperty("maxPlayers", maxPlayers);
 
             Path path = statusFile();
             Files.createDirectories(path.getParent());
@@ -161,6 +190,58 @@ public final class PortalBridgeBootstrap implements AutoCloseable {
 
     private Path statusFile() {
         return this.geyser.configDirectory().resolve(SESSION_STATUS_FILENAME);
+    }
+
+    private @Nullable GeyserPingInfo resolvePingInfo() {
+        IGeyserPingPassthrough pingPassthrough = geyser.getBootstrap().getGeyserPingPassthrough();
+        if (pingPassthrough == null) {
+            return null;
+        }
+
+        try {
+            return pingPassthrough.getPingInformation(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0));
+        } catch (RuntimeException exception) {
+            if (config.debugLogging()) {
+                geyser.getLogger().warning("[proxy-bridge] Failed to resolve live ping info for session status file: " + exception.getMessage());
+            }
+            return null;
+        }
+    }
+
+    private @Nullable String resolveBukkitMotd() {
+        try {
+            Class<?> bukkitClass = Class.forName("org.bukkit.Bukkit");
+            Object motd = bukkitClass.getMethod("getMotd").invoke(null);
+            if (motd instanceof String string && !string.isBlank()) {
+                return string.trim();
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private @Nullable Integer resolveBukkitOnlinePlayers() {
+        try {
+            Class<?> bukkitClass = Class.forName("org.bukkit.Bukkit");
+            Object onlinePlayers = bukkitClass.getMethod("getOnlinePlayers").invoke(null);
+            if (onlinePlayers instanceof Collection<?> collection) {
+                return collection.size();
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private @Nullable Integer resolveBukkitMaxPlayers() {
+        try {
+            Class<?> bukkitClass = Class.forName("org.bukkit.Bukkit");
+            Object maxPlayers = bukkitClass.getMethod("getMaxPlayers").invoke(null);
+            if (maxPlayers instanceof Integer integer) {
+                return integer;
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     private static List<String> copyRules(@Nullable List<String> configuredRules) {
