@@ -67,10 +67,11 @@ import java.util.Map;
 public class Item {
     public static final int BEDROCK_MAX_STACK_SIZE = 64;
     private static final Map<Block, Item> BLOCK_TO_ITEM = new HashMap<>();
+    private static final DataComponents EMPTY_COMPONENTS = new DataComponents(new HashMap<>());
     protected final Key javaIdentifier;
     private int javaId = -1;
     private final int attackDamage;
-    private DataComponents baseComponents; // unmodifiable
+    private DataComponents baseComponents = EMPTY_COMPONENTS; // unmodifiable
 
     public Item(String javaIdentifier, Builder builder) {
         this.javaIdentifier = MinecraftKey.key(javaIdentifier);

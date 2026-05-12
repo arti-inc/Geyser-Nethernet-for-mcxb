@@ -1,92 +1,89 @@
-/*
- * Copyright (c) 2024 GeyserMC. http://geysermc.org
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- *
- * @author GeyserMC
- * @link https://github.com/GeyserMC/Geyser
- */
-
 package org.geysermc.geyser.registry.populator;
 
-import com.google.common.collect.ImmutableMap;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
-import it.unimi.dsi.fastutil.objects.ObjectArrayList;
-import org.geysermc.geyser.GeyserBootstrap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import org.geysermc.geyser.GeyserImpl;
-import org.geysermc.geyser.registry.Registries;
 import org.geysermc.mcprotocollib.protocol.codec.MinecraftTypes;
-import org.geysermc.mcprotocollib.protocol.data.game.item.component.DataComponent;
 import org.geysermc.mcprotocollib.protocol.data.game.item.component.DataComponentType;
 import org.geysermc.mcprotocollib.protocol.data.game.item.component.DataComponentTypes;
 import org.geysermc.mcprotocollib.protocol.data.game.item.component.DataComponents;
 
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.util.Base64;
 import java.util.HashMap;
-import java.util.List;
+import java.util.Iterator;
 import java.util.Map;
 
-/**
- * Loads default item components for all Java items.
- */
 public final class DataComponentRegistryPopulator {
+    public static final Int2ObjectMap<DataComponents> ITEM_COMPONENTS = new Int2ObjectOpenHashMap<>();
+
+    private DataComponentRegistryPopulator() {
+    }
 
     public static void populate() {
-        GeyserBootstrap bootstrap = GeyserImpl.getInstance().getBootstrap();
-        List<DataComponents> defaultComponents;
-        try (InputStream stream = bootstrap.getResourceOrThrow("mappings/item_data_components.json")) {
-            //noinspection deprecation - 1.16.5 breaks otherwise
-            JsonElement rootElement = new JsonParser().parse(new InputStreamReader(stream));
-            JsonArray jsonArray = rootElement.getAsJsonArray();
+        ITEM_COMPONENTS.clear();
 
-            defaultComponents = new ObjectArrayList<>(jsonArray.size());
+        try {
+            JsonElement root = GeyserImpl.GSON.fromJson(
+                    new java.io.InputStreamReader(
+                            GeyserImpl.getInstance().getBootstrap().getResourceOrThrow("mappings/item_data_components.json"),
+                            java.nio.charset.StandardCharsets.UTF_8
+                    ),
+                    JsonElement.class
+            );
+            for (JsonElement itemElement : root.getAsJsonArray()) {
+                JsonObject itemEntry = itemElement.getAsJsonObject();
+                int javaId = itemEntry.get("id").getAsInt();
+                JsonObject componentsNode = itemEntry.getAsJsonObject("components");
+                DataComponents components = new DataComponents(new HashMap<>());
 
-            for (JsonElement element : jsonArray) {
-                JsonObject entryObject = element.getAsJsonObject();
-                JsonObject components = entryObject.getAsJsonObject("components");
+                if (componentsNode != null) {
+                    Iterator<Map.Entry<String, JsonElement>> componentIterator = componentsNode.entrySet().iterator();
+                    while (componentIterator.hasNext()) {
+                        Map.Entry<String, JsonElement> componentEntry = componentIterator.next();
+                        try {
+                            JsonElement encodedNode = componentEntry.getValue();
+                            if (encodedNode == null || encodedNode.isJsonNull() || !encodedNode.isJsonPrimitive() || !encodedNode.getAsJsonPrimitive().isString()) {
+                                continue;
+                            }
 
-                Map<DataComponentType<?>, DataComponent<?, ?>> map = new HashMap<>();
+                            byte[] bytes = Base64.getDecoder().decode(encodedNode.getAsString());
+                            ByteBuf buf = Unpooled.wrappedBuffer(bytes);
+                            try {
+                                int typeId = MinecraftTypes.readVarInt(buf);
+                                DataComponentType<?> dataComponentType = DataComponentTypes.from(typeId);
+                                if (dataComponentType == null) {
+                                    GeyserImpl.getInstance().getLogger().warning("Skipping unknown data component type " + typeId
+                                            + " for Java item " + javaId + " (" + componentEntry.getKey() + ").");
+                                    continue;
+                                }
 
-                for (Map.Entry<String, JsonElement> componentEntry : components.entrySet()) {
-                    String encodedValue = componentEntry.getValue().getAsString();
-                    byte[] bytes = Base64.getDecoder().decode(encodedValue);
-                    ByteBuf buf = Unpooled.wrappedBuffer(bytes);
-                    int varInt = MinecraftTypes.readVarInt(buf);
-                    DataComponentType<?> dataComponentType = DataComponentTypes.from(varInt);
-                    DataComponent<?, ?> dataComponent = dataComponentType.readDataComponent(buf);
-
-                    map.put(dataComponentType, dataComponent);
+                                Object value = dataComponentType.readDataComponent(buf);
+                                if (value != null) {
+                                    putComponent(components, dataComponentType, value);
+                                }
+                            } finally {
+                                buf.release();
+                            }
+                        } catch (Exception componentException) {
+                            GeyserImpl.getInstance().getLogger().warning("Skipping malformed data component " + componentEntry.getKey()
+                                    + " for Java item " + javaId + ": " + componentException.getMessage());
+                        }
+                    }
                 }
 
-                defaultComponents.add(new DataComponents(ImmutableMap.copyOf(map)));
+                ITEM_COMPONENTS.put(javaId, components);
             }
         } catch (Exception e) {
             throw new AssertionError("Unable to load or parse components", e);
         }
+    }
 
-        Registries.DEFAULT_DATA_COMPONENTS.set(defaultComponents);
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static void putComponent(DataComponents components, DataComponentType<?> dataComponentType, Object value) {
+        components.put((DataComponentType) dataComponentType, value);
     }
 }

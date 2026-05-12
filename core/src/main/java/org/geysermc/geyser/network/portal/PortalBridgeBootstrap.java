@@ -26,6 +26,7 @@
 package org.geysermc.geyser.network.portal;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.geysermc.geyser.GeyserImpl;
 import org.geysermc.geyser.configuration.PortalBridgeConfig;
@@ -51,12 +52,15 @@ import java.util.concurrent.TimeUnit;
  */
 public final class PortalBridgeBootstrap implements AutoCloseable {
     private static final String SESSION_STATUS_FILENAME = "portal-session-status.json";
+    private static final String NETWORK_ID_FILENAME = "portal-nethernet-id.txt";
+    private static final String SHARDS_FILENAME = "portal-nethernet-shards.json";
+    private static final String IDENTITIES_FILENAME = "portal-nethernet-identities.json";
     private final GeyserImpl geyser;
     private final PortalBridgeConfig config;
     private final List<CIDRMatcher> trustedProxyMatchers;
     private final List<String> configuredRules;
     private @Nullable ScheduledExecutorService statusWriterExecutor;
-    private @Nullable PortalNetherNetServer netherNetServer;
+    private final List<PortalNetherNetServer> netherNetServers = new ArrayList<>();
 
     public PortalBridgeBootstrap(GeyserImpl geyser) {
         this.geyser = geyser;
@@ -81,8 +85,7 @@ public final class PortalBridgeBootstrap implements AutoCloseable {
         }
 
         try {
-            this.netherNetServer = new PortalNetherNetServer(geyser, config);
-            this.netherNetServer.start();
+            startNetherNetServers();
             startStatusWriter();
         } catch (Throwable throwable) {
             geyser.getLogger().error("[proxy-bridge] Failed to start NetherNet ingress.", throwable);
@@ -119,10 +122,11 @@ public final class PortalBridgeBootstrap implements AutoCloseable {
             this.statusWriterExecutor = null;
         }
         deleteStatusFile();
-        if (this.netherNetServer != null) {
-            this.netherNetServer.close();
-            this.netherNetServer = null;
+        deleteShardFiles();
+        for (PortalNetherNetServer server : this.netherNetServers) {
+            server.close();
         }
+        this.netherNetServers.clear();
     }
 
     private void startStatusWriter() {
@@ -167,6 +171,7 @@ public final class PortalBridgeBootstrap implements AutoCloseable {
             root.addProperty("worldName", primaryMotd);
             root.addProperty("players", players);
             root.addProperty("maxPlayers", maxPlayers);
+            root.addProperty("shardCount", this.netherNetServers.size());
 
             Path path = statusFile();
             Files.createDirectories(path.getParent());
@@ -190,6 +195,109 @@ public final class PortalBridgeBootstrap implements AutoCloseable {
 
     private Path statusFile() {
         return this.geyser.configDirectory().resolve(SESSION_STATUS_FILENAME);
+    }
+
+    private void startNetherNetServers() {
+        this.netherNetServers.clear();
+        List<String> persistedNetworkIds = readPersistedNetworkIds();
+        for (int i = 0; i < this.config.shardCount(); i++) {
+            String configuredNetworkId = "";
+            if (i == 0 && !this.config.netherNetNetworkId().isBlank()) {
+                configuredNetworkId = this.config.netherNetNetworkId();
+            } else if (i < persistedNetworkIds.size()) {
+                configuredNetworkId = persistedNetworkIds.get(i);
+            }
+            PortalNetherNetServer server = new PortalNetherNetServer(this.geyser, this.config, configuredNetworkId);
+            server.start();
+            this.netherNetServers.add(server);
+        }
+        writeShardFiles();
+    }
+
+    private void writeShardFiles() {
+        try {
+            if (this.netherNetServers.isEmpty()) {
+                return;
+            }
+
+            Path legacyPath = this.geyser.configDirectory().resolve(NETWORK_ID_FILENAME);
+            Files.createDirectories(legacyPath.getParent());
+            Files.writeString(legacyPath, this.netherNetServers.getFirst().networkId() + System.lineSeparator());
+
+            JsonObject root = new JsonObject();
+            var shards = new com.google.gson.JsonArray();
+            for (int i = 0; i < this.netherNetServers.size(); i++) {
+                JsonObject shard = new JsonObject();
+                shard.addProperty("id", "shard-" + (i + 1));
+                shard.addProperty("index", i + 1);
+                shard.addProperty("networkId", this.netherNetServers.get(i).networkId());
+                shards.add(shard);
+            }
+            root.add("shards", shards);
+
+            Path shardsPath = this.geyser.configDirectory().resolve(SHARDS_FILENAME);
+            Files.createDirectories(shardsPath.getParent());
+            Files.writeString(shardsPath, root.toString() + System.lineSeparator());
+
+            Path identitiesPath = this.geyser.configDirectory().resolve(IDENTITIES_FILENAME);
+            Files.createDirectories(identitiesPath.getParent());
+            Files.writeString(identitiesPath, root.toString() + System.lineSeparator());
+        } catch (Exception exception) {
+            this.geyser.getLogger().warning("[proxy-bridge] Failed to persist NetherNet shard metadata: " + exception.getMessage());
+        }
+    }
+
+    private void deleteShardFiles() {
+        try {
+            Files.deleteIfExists(this.geyser.configDirectory().resolve(NETWORK_ID_FILENAME));
+        } catch (Exception exception) {
+            if (config.debugLogging()) {
+                geyser.getLogger().warning("[proxy-bridge] Failed to remove legacy NetherNet ID file: " + exception.getMessage());
+            }
+        }
+
+        try {
+            Files.deleteIfExists(this.geyser.configDirectory().resolve(SHARDS_FILENAME));
+        } catch (Exception exception) {
+            if (config.debugLogging()) {
+                geyser.getLogger().warning("[proxy-bridge] Failed to remove NetherNet shard file: " + exception.getMessage());
+            }
+        }
+    }
+
+    private List<String> readPersistedNetworkIds() {
+        List<String> ids = new ArrayList<>();
+        Path identitiesPath = this.geyser.configDirectory().resolve(IDENTITIES_FILENAME);
+        if (!Files.isRegularFile(identitiesPath)) {
+            return ids;
+        }
+
+        try {
+            JsonObject root = JsonParser.parseString(Files.readString(identitiesPath)).getAsJsonObject();
+            if (!root.has("shards") || !root.get("shards").isJsonArray()) {
+                return ids;
+            }
+
+            root.getAsJsonArray("shards").forEach(element -> {
+                if (!element.isJsonObject()) {
+                    return;
+                }
+                JsonObject shard = element.getAsJsonObject();
+                if (!shard.has("networkId") || shard.get("networkId").isJsonNull()) {
+                    return;
+                }
+                String networkId = shard.get("networkId").getAsString().replaceAll("[^0-9]", "");
+                if (!networkId.isBlank()) {
+                    ids.add(networkId);
+                }
+            });
+        } catch (Exception exception) {
+            if (config.debugLogging()) {
+                geyser.getLogger().warning("[proxy-bridge] Failed to read persisted NetherNet identities: " + exception.getMessage());
+            }
+        }
+
+        return ids;
     }
 
     private @Nullable GeyserPingInfo resolvePingInfo() {

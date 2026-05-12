@@ -7,6 +7,7 @@ import dev.kastle.netty.channel.nethernet.signaling.NetherNetXboxSignaling;
 import dev.kastle.webrtc.PeerConnectionFactory;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.util.concurrent.DefaultThreadFactory;
@@ -18,7 +19,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 public final class PortalNetherNetServer implements AutoCloseable {
-    private static final String NETWORK_ID_FILENAME = "portal-nethernet-id.txt";
     private final GeyserImpl geyser;
     private final PortalBridgeConfig config;
     private final EventLoopGroup bossGroup = new NioEventLoopGroup(1, new DefaultThreadFactory("GeyserNetherNetBoss", true));
@@ -26,20 +26,22 @@ public final class PortalNetherNetServer implements AutoCloseable {
     private final GeyserNetherNetServerInitializer initializer;
     private final PeerConnectionFactory peerConnectionFactory;
     private final NetherNetXboxSignaling signaling;
+    private final String configuredNetworkId;
     private Channel channel;
 
-    public PortalNetherNetServer(GeyserImpl geyser, PortalBridgeConfig config) {
+    public PortalNetherNetServer(GeyserImpl geyser, PortalBridgeConfig config, String configuredNetworkId) {
         this.geyser = geyser;
         this.config = config;
+        this.configuredNetworkId = configuredNetworkId == null ? "" : configuredNetworkId;
         this.initializer = new GeyserNetherNetServerInitializer(geyser);
         this.peerConnectionFactory = new PeerConnectionFactory();
-        this.signaling = createSignaling(geyser, config);
+        this.signaling = createSignaling(geyser, config, this.configuredNetworkId);
     }
 
-    private static NetherNetXboxSignaling createSignaling(GeyserImpl geyser, PortalBridgeConfig config) {
+    private static NetherNetXboxSignaling createSignaling(GeyserImpl geyser, PortalBridgeConfig config, String configuredNetworkId) {
         String authHeader = resolveAuthHeader(geyser, config);
-        if (!config.netherNetNetworkId().isBlank()) {
-            return new NetherNetXboxSignaling(config.netherNetNetworkId(), authHeader);
+        if (!configuredNetworkId.isBlank()) {
+            return new NetherNetXboxSignaling(configuredNetworkId, authHeader);
         }
         return new NetherNetXboxSignaling(authHeader);
     }
@@ -70,10 +72,10 @@ public final class PortalNetherNetServer implements AutoCloseable {
         ServerBootstrap bootstrap = new ServerBootstrap()
             .group(this.bossGroup, this.workerGroup)
             .channelFactory(NetherNetChannelFactory.server(this.peerConnectionFactory, this.signaling))
+            .childOption(ChannelOption.TCP_NODELAY, false)
             .childHandler(this.initializer);
 
         this.channel = bootstrap.bind(new InetSocketAddress(0)).syncUninterruptibly().channel();
-        writeNetworkIdFile();
         this.geyser.getLogger().info("[proxy-bridge] NetherNet ingress started with network ID " + this.signaling.getLocalNetworkId());
         if (config.debugLogging()) {
             this.geyser.getLogger().info("[proxy-bridge] NetherNet control channel bound through Xbox signaling and local server bootstrap.");
@@ -86,7 +88,6 @@ public final class PortalNetherNetServer implements AutoCloseable {
             this.channel.close().syncUninterruptibly();
             this.channel = null;
         }
-        deleteNetworkIdFile();
         this.signaling.close();
         this.initializer.close();
         this.workerGroup.shutdownGracefully();
@@ -98,31 +99,7 @@ public final class PortalNetherNetServer implements AutoCloseable {
         }
     }
 
-    private void writeNetworkIdFile() {
-        Path path = networkIdFile();
-        try {
-            Files.createDirectories(path.getParent());
-            Files.writeString(path, this.signaling.getLocalNetworkId() + System.lineSeparator());
-            if (config.debugLogging()) {
-                this.geyser.getLogger().info("[proxy-bridge] Wrote NetherNet ID to " + path);
-            }
-        } catch (Exception exception) {
-            this.geyser.getLogger().warning("[proxy-bridge] Failed to persist NetherNet ID to " + path + ": " + exception.getMessage());
-        }
-    }
-
-    private void deleteNetworkIdFile() {
-        Path path = networkIdFile();
-        try {
-            Files.deleteIfExists(path);
-        } catch (Exception exception) {
-            if (config.debugLogging()) {
-                this.geyser.getLogger().warning("[proxy-bridge] Failed to remove NetherNet ID file " + path + ": " + exception.getMessage());
-            }
-        }
-    }
-
-    private Path networkIdFile() {
-        return this.geyser.configDirectory().resolve(NETWORK_ID_FILENAME);
+    public String networkId() {
+        return this.signaling.getLocalNetworkId();
     }
 }

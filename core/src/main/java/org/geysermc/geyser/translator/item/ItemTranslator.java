@@ -83,6 +83,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.HashMap;
 
 public final class ItemTranslator {
 
@@ -189,6 +190,9 @@ public final class ItemTranslator {
 
         // Populates default components that aren't sent over the network
         DataComponents components = javaItem.gatherComponents(session.getComponentCache(), customComponents);
+        if (components == null) {
+            components = new DataComponents(new HashMap<>());
+        }
         TooltipOptions tooltip = TooltipOptions.fromComponents(components);
 
         // Translate item-specific components

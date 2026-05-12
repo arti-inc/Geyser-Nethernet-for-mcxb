@@ -58,6 +58,11 @@ public final class PortalBridgeConfig {
     private String netherNetNetworkId;
 
     @Comment("""
+        The number of parallel NetherNet ingress IDs to expose.
+        Each ID can be published as its own Xbox session shard while still landing in the same Geyser backend.""")
+    private int shardCount = 1;
+
+    @Comment("""
         Xbox/NetherNet authorization header for the server-side signaling session.
         This is currently required to terminate NetherNet sessions directly inside Geyser until Xbox session management is migrated here too.""")
     private String xboxAuthHeader;
@@ -81,6 +86,10 @@ public final class PortalBridgeConfig {
 
     public String netherNetNetworkId() {
         return Objects.requireNonNullElse(netherNetNetworkId, "");
+    }
+
+    public int shardCount() {
+        return Math.max(1, shardCount);
     }
 
     public String xboxAuthHeader() {
